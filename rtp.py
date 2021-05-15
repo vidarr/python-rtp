@@ -122,23 +122,17 @@ def decode(frame):
 
     data = [None] * len(Rtp)
 
-    def get_field(*indices):
+    def get_fields(index, *more_indices):
 
-        if not indices:
-            return None
-
-        if  1 == len(indices):
-            i = indices[0]
+        def get_field(i):
             if not i in Rtp:
                 raise ValueError()
-
             return data[i.value]
 
-        fields = []
-        for i in indices:
-            fields.append(get_field(i))
+        if not more_indices:
+            return get_field(index)
 
-        return fields
+        return [get_field(index)] + [get_field(i) for i in more_indices]
 
 
     (h1, h2, seq, ts, ssrc) = unpack(">BBHII", frame[:12])
@@ -160,7 +154,7 @@ def decode(frame):
 
     data[Rtp.Payload.value] = frame[read_index:]
 
-    return get_field
+    return get_fields
 
 #-------------------------------------------------------------------------------
 

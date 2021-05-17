@@ -64,9 +64,13 @@ Note:
 
 #------------------------------------------------------------------------------
 
-from sys import stdout
+from sys import stdout, version_info
 from struct import unpack, pack
 from enum import Enum, unique
+
+#-------------------------------------------------------------------------------
+
+assert((3, 6, 0) <= version_info)
 
 #-------------------------------------------------------------------------------
 

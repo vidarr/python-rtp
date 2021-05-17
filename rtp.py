@@ -64,8 +64,7 @@ Note:
 
 #------------------------------------------------------------------------------
 
-import os
-from sys import argv, stdout
+from sys import stdout
 from struct import unpack, pack
 from enum import Enum, unique
 
@@ -108,8 +107,6 @@ def decode(frame):
     '''
 
     def parse_32bit_nums_big_endian(num, inbytes):
-
-        print(f"{num}")
 
         numbers = []
 

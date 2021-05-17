@@ -50,8 +50,6 @@ Decode a frame:
 
 Note:
 
-   * Marker bit currently only supported for decoding.
-   * Padding currently unsupported
    * Extension header unsupported - if present in encoded frame, will be skipped
 
 @author Michael J. Beer <michael.josef.beer@gmail.com>
@@ -67,7 +65,7 @@ Note:
 #------------------------------------------------------------------------------
 
 import os
-from sys import argv
+from sys import argv, stdout
 from struct import unpack, pack
 from enum import Enum, unique
 
@@ -84,6 +82,7 @@ class Rtp(Enum):
     SequenceNumber = 5
     Version = 6
     Marker = 7
+    Padding = 8
 
 #-------------------------------------------------------------------------------
 
@@ -109,6 +108,8 @@ def decode(frame):
     '''
 
     def parse_32bit_nums_big_endian(num, inbytes):
+
+        print(f"{num}")
 
         numbers = []
 
@@ -152,7 +153,15 @@ def decode(frame):
     if (h1 & 0x10):
         read_index = index_after_extension_header(frame[read_index:])
 
-    data[Rtp.Payload.value] = frame[read_index:]
+    payload = frame[read_index:]
+
+    if (h1 & 0x20):
+        padding_length = payload[-1]
+        data[Rtp.Padding.value] = payload[-padding_length - 1:-1]
+        payload = payload[:-padding_length - 1]
+
+
+    data[Rtp.Payload.value] = payload
 
     return get_fields
 
@@ -165,6 +174,8 @@ def encode(ssrc, payload_type, payload, seq, timestamp, **args):
     Additional arguments might be
     version 1 or 2 are supported (but really, only 2 makes actual sense)
     csrcs   List of CSRC ids (maximum of 15 are supported by RTP)
+    padding byte string that will be appended to the payload as padding
+    marker  true or false depending whether marker bit should be set
 
     Example:
 
@@ -177,6 +188,9 @@ def encode(ssrc, payload_type, payload, seq, timestamp, **args):
 
     version = args.get("version", 2)
     csrcs = args.get('csrcs', [])
+    padding = args.get('padding', [])
+    marker = args.get('marker', False)
+
 
     if version not in set([1, 2]):
         raise ValueError("Version must be either 1 or 2")
@@ -187,9 +201,16 @@ def encode(ssrc, payload_type, payload, seq, timestamp, **args):
                 f"{len(csrcs)}")
 
     h1 = (version << 6)
+
+    if padding:
+        h1 = h1 | 0x20
+
     h1 += len(csrcs)
 
     h2 = payload_type & 0x7f
+
+    if marker:
+        h2 = h2 | 0x80
 
     frame = pack(">BBHII", h1, h2, seq, timestamp, ssrc)
 
@@ -202,7 +223,25 @@ def encode(ssrc, payload_type, payload, seq, timestamp, **args):
 
     frame += bytes(payload)
 
+    if len(padding) > 0xff:
+        raise ValueError(f"Padding too long - max. supported length is {0xff}")
+
+    if padding:
+        frame += bytes(padding)
+        frame += bytes([len(padding)])
+
     return frame
+
+#--------------------------------------------------------------------------------
+
+def dump(decoded_frame, out=stdout):
+
+    '''
+    Dumps a decoded RTP frame to `out`.
+    '''
+
+    for field in Rtp:
+        out.write(f'{field} :  {decoded_frame(field)}\n')
 
 #------------------------------------------------------------------------------
 
@@ -217,7 +256,7 @@ if __name__ == "__main__":
 
     # Some test data ...
 
-    payload = [0xf1, 0xe2, 0xd3, 0xc4, 0xb5, 0xa6]
+    payload = bytes([0xf1, 0xe2, 0xd3, 0xc4, 0xb5, 0xa6])
 
     payload_type = 127
 
@@ -245,17 +284,63 @@ if __name__ == "__main__":
 
     decoded = decode(encoded)
 
-    for field in Rtp:
-        print(f'{field} :  {decoded(field)}')
+    dump(decoded)
 
     assert(ssrc == decoded(Rtp.Ssrc))
     assert(sequence_number == decoded(Rtp.SequenceNumber))
     assert(timestamp == decoded(Rtp.Timestamp))
     assert(payload_type == decoded(Rtp.PayloadType))
+    assert(payload == decoded(Rtp.Payload))
+    assert(None == decoded(Rtp.Padding))
+    assert(False == decoded(Rtp.Marker))
 
     for csrc, ref in zip(csrcs, decoded(Rtp.Csrcs)):
         assert(csrc == ref)
 
-    for p, r in zip(payload, decoded(Rtp.Payload)):
-        assert(p == r)
+    print("\n\nTest padding ...\n")
 
+    padding = bytes([1, 2, 3])
+    test_frame += padding + bytes([len(padding)])
+    test_frame[0] = test_frame[0] | 0x20
+
+    decoded = decode(bytes(test_frame))
+
+    encoded = encode(ssrc, payload_type, payload, sequence_number, timestamp,
+            version = version, csrcs = csrcs, padding=padding)
+
+    assert(bytes(test_frame) == encoded)
+
+    decoded = decode(encoded)
+
+    dump(decoded)
+
+    assert(ssrc == decoded(Rtp.Ssrc))
+    assert(sequence_number == decoded(Rtp.SequenceNumber))
+    assert(timestamp == decoded(Rtp.Timestamp))
+    assert(payload_type == decoded(Rtp.PayloadType))
+    assert(payload == decoded(Rtp.Payload))
+    assert(padding == decoded(Rtp.Padding))
+    assert(False == decoded(Rtp.Marker))
+
+    print("\n\nTest marker bit ...\n")
+
+    test_frame[1] = test_frame[1] | 0x80
+
+    decoded = decode(bytes(test_frame))
+
+    encoded = encode(ssrc, payload_type, payload, sequence_number, timestamp,
+            version = version, csrcs = csrcs, padding=padding, marker=True)
+
+    assert(bytes(test_frame) == encoded)
+
+    decoded = decode(encoded)
+
+    dump(decoded)
+
+    assert(ssrc == decoded(Rtp.Ssrc))
+    assert(sequence_number == decoded(Rtp.SequenceNumber))
+    assert(timestamp == decoded(Rtp.Timestamp))
+    assert(payload_type == decoded(Rtp.PayloadType))
+    assert(payload == decoded(Rtp.Payload))
+    assert(padding == decoded(Rtp.Padding))
+    assert(True == decoded(Rtp.Marker))
